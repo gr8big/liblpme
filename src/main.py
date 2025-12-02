@@ -3,8 +3,9 @@ import time
 import typing
 import asyncio
 from nacl import bindings
+from argon2 import exceptions
 from argon2 import PasswordHasher
-from hashlib import sha3_256, sha3_512
+from quart import Quart, Response, request
 
 # general classes
 
@@ -16,7 +17,7 @@ class Session:
     `Session.bump()` is called.
     """
 
-    def __init__(self, lifetime:float=30):
+    def __init__(self, id:int, lifetime:float=30):
         """Session constructor.
 
         The `lifetime` argument is used as a basis for:
@@ -24,13 +25,15 @@ class Session:
         - The lifetime used when bumping the session
         """
 
+        self.id = id
         self.__token = os.urandom(64)
         self.__token_str = bytes(self.__token.hex(), "utf8")
         self.__expiry = time.perf_counter() + lifetime
-        self.__on_expire = []
         self.__expire_event = asyncio.Event()
         self.__lifetime = lifetime
         self.__expiry_task = asyncio.create_task(self.expiry_loop())
+        self.__on_expire = []
+        self.__on_teardown = []
 
     def on_expire(self, callback:typing.Callable[[typing.Self],typing.Awaitable[None]]):
         """Add a listener that is called when the session expires.
@@ -43,6 +46,20 @@ class Session:
         """
 
         self.__on_expire.append(callback)
+        return callback
+    
+    def on_teardown(self, callback:typing.Callable[[typing.Self],typing.Awaitable[None]]):
+        """Add a listener that is called when the session expires.
+        
+        The callback should take one argument, which is the issuing `Session`.
+        It should return an `Awaitable`.
+        
+        Expiry callbacks are called **after** the session is torn down.
+        This is either after it expires, or when it is manually
+        closed.
+        """
+
+        self.__on_teardown.append(callback)
         return callback
     
     async def expiry_loop(self):
@@ -113,6 +130,9 @@ class Session:
         self.__expiry = 0
         self.__lifetime = -1
 
+        for i in self.__on_teardown:
+            await i(self)
+
     async def get_user_token(self) -> str:
         """Get the token as a string that can be used as a raw
         HTTP header.
@@ -121,7 +141,7 @@ class Session:
         return str(self.__token_str, "utf8")
 
 class SessionManager:
-    """Utility to manage `Session` objects, using tokens as
+    """Utility to manage `Session` objects, using session IDs as
     a reference.
     """
 
@@ -140,10 +160,11 @@ class SessionManager:
 
         self.__sessions = {}
         self.__key = key
+        self.__id_prog = 0
         self.__hasher = hasher
 
-    def get_session(self, token:str) -> Session|None:
-        """Get a session, using a user-issued token as a key.
+    def get_session(self, id:int) -> Session|None:
+        """Get a session, using a user-issued ID as a key.
 
         If the session exists, it is returned, otherwise `None`
         is returned.
@@ -152,8 +173,8 @@ class SessionManager:
         need to validate the session after it is returned.
         """
 
-        if token in self.__sessions:
-            return self.__sessions[token]
+        if id in self.__sessions:
+            return self.__sessions[id]
         return None
     
     async def start_session(self, lifetime:float=30) -> Session:
@@ -164,8 +185,12 @@ class SessionManager:
         returns it.
         """
 
-        ses = Session(lifetime)
-        self.__sessions[await ses.get_user_token()] = ses
+        id = self.__id_prog
+        self.__id_prog += 1
+
+        ses = Session(id, lifetime)
+        self.__sessions[id] = ses
+        ses.on_teardown(self.__teardown)
         return ses
 
     async def authenticate(self, key:str, lifetime:float=30) -> Session:
@@ -187,3 +212,95 @@ class SessionManager:
         
         # literally impossible
         raise RuntimeError("Verify failed")
+
+    async def __teardown(self, ses:Session):
+        del self.__sessions[ses.id]
+
+# main class
+
+class LPMEEndpointApi:
+    """Utility wrapper for the LPME API.
+    """
+
+    def __init__(
+            self,
+            app:Quart,
+            base_endpoint:str="/lpme",
+            *,
+            manager:SessionManager|None=None,
+            api_key:str|None=None,
+            hasher:PasswordHasher|None=None,
+            lifetime:float=30
+    ):
+        """Construct an `LPMEEndpointApi` around an existing
+        app.
+        """
+
+        if manager is None:
+            if api_key is None:
+                raise ValueError("API key must be set when manager is not")
+            
+            manager = SessionManager(api_key, hasher)
+
+        self.__app = app
+        self.__base_endpoint = base_endpoint.rstrip("/")
+        self.__manager = manager
+        self.__lifetime = lifetime
+
+        app.route(self.__base_endpoint, methods=["POST"])(self.__hndl_auth)
+        self.event("/liblpme/shutdown")(self.__hndl_shutdown)
+
+    def event(self, endpoint:str):
+        """Add an event listener.
+
+        The handler for an event is identical to a standard
+        Quart request handler. However, the first argument
+        passed will always be the `Session` object of the
+        client executing the command.
+        """
+
+        if not endpoint.startswith("/"):
+            raise ValueError("Endpoint must start with a trailing '/'")
+        
+        def wrapper(callback:typing.Callable[...,typing.Awaitable]):
+            async def handler(*args, **kwargs):
+                ses_tk = request.headers.get("X-LPME-Session", "")
+                ses_id = request.headers.get("X-LPME-Session-Id", -1, int)
+                session = self.__manager.get_session(ses_id)
+
+                if session is None:
+                    return "Unauthorized", 401
+                
+                if await session.validate(ses_tk) is True:
+                    return await callback(session, *args, **kwargs)
+                else:
+                    return "Forbidden", 403
+
+            handler.__name__ = f"handler_{callback.__name__}"
+            self.__app.route(
+                f"{self.__base_endpoint}{endpoint}",
+                methods=["POST"]
+            )(handler)
+
+            return handler
+        return wrapper
+
+
+    # base handlers
+
+    async def __hndl_auth(self):
+        api_key = request.headers.get("X-LPME-Token", "")
+
+        try:
+            ses = await self.__manager.authenticate(api_key, self.__lifetime)
+
+            response = Response("", 200, mimetype="text/plain")
+            response.headers.set("X-LPME-Session-Id", str(ses.id))
+            response.headers.set("X-LPME-Session", ses)
+            return response
+
+        except exceptions.Argon2Error:
+            return "Unauthorized", 401
+
+    async def __hndl_shutdown(self, ses:Session):
+        await ses.teardown()
