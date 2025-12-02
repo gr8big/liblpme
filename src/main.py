@@ -8,6 +8,20 @@ from argon2 import exceptions
 from argon2 import PasswordHasher
 from quart import Quart, Response, request, make_response
 
+# utility
+
+async def respond_stream(f:asyncio.StreamReader):
+    while True:
+        chunk = await f.read()
+        if chunk:
+            yield chunk
+        break
+
+async def chunk_writer(chunks:list[bytes], to:asyncio.StreamReader):
+    for i in chunks:
+        to.feed_data(to)
+    to.feed_eof()
+
 # general classes
 
 class Session:
@@ -17,6 +31,20 @@ class Session:
     how long the session is allowed to live, and is used when
     `Session.bump()` is called.
     """
+
+    id: int
+    unique_id: str
+
+    __token: bytes
+    __token_str: bytes
+    __expiry: float
+    __expire_event: asyncio.Event
+    __lifetime: float
+    __expiry_task: asyncio.Task
+    __on_expire: list[typing.Callable[[typing.Self],typing.Awaitable[None]]]
+    __on_teardown: list[typing.Callable[[typing.Self],typing.Awaitable[None]]]
+    
+    __outgoing: asyncio.Queue[bytes]
 
     def __init__(self, id:int, lifetime:float=30):
         """Session constructor.
@@ -40,6 +68,7 @@ class Session:
         self.__expiry_task = asyncio.create_task(self.expiry_loop())
         self.__on_expire = []
         self.__on_teardown = []
+        self.__outgoing = asyncio.Queue()
 
     def on_expire(self, callback:typing.Callable[[typing.Self],typing.Awaitable[None]]):
         """Add a listener that is called when the session expires.
@@ -135,6 +164,7 @@ class Session:
         self.__token_str = b""
         self.__expiry = 0
         self.__lifetime = -1
+        self.__outgoing.shutdown(True)
 
         for i in self.__on_teardown:
             await i(self)
@@ -145,6 +175,39 @@ class Session:
         """
 
         return str(self.__token_str, "utf8")
+
+
+    async def long_poll(self, max_ttl:float=55.0) -> list[bytes]:
+        """Long-poll the outgoing message queue.
+        
+        The `max_ttl` is used as a hard limit on how long a
+        single poll is allowed to take. If this limit is
+        reached, an empty list is returned.
+        """
+
+        res = []
+        try:
+            async with asyncio.timeout(max_ttl):
+                res.append(await self.__outgoing.get())
+            
+            while not self.__outgoing.empty():
+                res.append(self.__outgoing.get_nowait())
+        except asyncio.TimeoutError:
+            pass
+
+        return res
+
+    async def push(self, message:bytes):
+        """Push a message to be sent at the next long-poll
+        cycle.
+
+        Messages are inserted into the outgoing queue. As
+        such, if the session has been shut down already, this
+        will fail, as the queue will have also been shut
+        down.
+        """
+
+        self.__outgoing.put_nowait(message)
 
 class SessionManager:
     """Utility to manage `Session` objects, using session IDs as
@@ -255,6 +318,7 @@ class LPMEEndpointApi:
 
         app.route(self.__base_endpoint, methods=["POST"])(self.__hndl_auth)
         self.event("/liblpme/shutdown")(self.__hndl_shutdown)
+        self.event("/liblpme/longpoll")(self.__hndl_longpoll)
 
     def event(self, endpoint:str):
         """Add an event listener.
@@ -320,3 +384,11 @@ class LPMEEndpointApi:
 
     async def __hndl_shutdown(self, ses:Session):
         await ses.teardown()
+
+    async def __hndl_longpoll(self, ses:Session):
+        f = asyncio.StreamReader()
+        chunks = await ses.long_poll()
+
+        res = Response(respond_stream(f), 200, mimetype="application/x-lpme-chunks")
+        res.headers.set("X-LPME-Chunk-Count", str(len(chunks)))
+        return res
