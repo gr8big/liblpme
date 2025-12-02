@@ -3,9 +3,10 @@ import time
 import typing
 import asyncio
 from nacl import bindings
+from hashlib import sha3_256
 from argon2 import exceptions
 from argon2 import PasswordHasher
-from quart import Quart, Response, request
+from quart import Quart, Response, request, make_response
 
 # general classes
 
@@ -26,6 +27,11 @@ class Session:
         """
 
         self.id = id
+        self.unique_id = sha3_256(
+            os.urandom(16)
+            + time.perf_counter_ns().to_bytes(16, "little", signed=True)
+        ).hexdigest()
+
         self.__token = os.urandom(64)
         self.__token_str = bytes(self.__token.hex(), "utf8")
         self.__expiry = time.perf_counter() + lifetime
@@ -272,7 +278,16 @@ class LPMEEndpointApi:
                     return "Unauthorized", 401
                 
                 if await session.validate(ses_tk) is True:
-                    return await callback(session, *args, **kwargs)
+                    res = await callback(session, *args, **kwargs)
+
+                    if not isinstance(res, Response):
+                        if isinstance(res, tuple):
+                            res = make_response(*res)
+                        else:
+                            res = make_response(res)
+
+                    res.headers.set("X-LPME-Server-Id", session.unique_id)
+                    return res
                 else:
                     return "Forbidden", 403
 
@@ -297,6 +312,7 @@ class LPMEEndpointApi:
             response = Response("", 200, mimetype="text/plain")
             response.headers.set("X-LPME-Session-Id", str(ses.id))
             response.headers.set("X-LPME-Session", ses)
+            response.headers.set("X-LPME-Server-Id", ses.unique_id)
             return response
 
         except exceptions.Argon2Error:
