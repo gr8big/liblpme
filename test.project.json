@@ -7,6 +7,9 @@
       "LPME": {
         "$path": "src/client"
       }
+    },
+    "ServerScriptService": {
+      "$path": "test/client"
     }
   }
 }

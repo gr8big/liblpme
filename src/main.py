@@ -19,7 +19,8 @@ async def respond_stream(f:asyncio.StreamReader):
 
 async def chunk_writer(chunks:list[bytes], to:asyncio.StreamReader):
     for i in chunks:
-        to.feed_data(to)
+        to.feed_data(len(i).to_bytes(4, "little", signed=False))
+        to.feed_data(i)
     to.feed_eof()
 
 # general classes
@@ -201,6 +202,8 @@ class Session:
         """Push a message to be sent at the next long-poll
         cycle.
 
+        For general use, use `Session.run`.
+
         Messages are inserted into the outgoing queue. As
         such, if the session has been shut down already, this
         will fail, as the queue will have also been shut
@@ -208,6 +211,15 @@ class Session:
         """
 
         self.__outgoing.put_nowait(message)
+
+    async def run(self, command:str, body:bytes):
+        """Push a message to the client to run a command.
+
+        This uses `Session.push` internally to send a
+        formatted message.
+        """
+
+        await self.push(bytes(command, "utf8") + b"\0" + body)
 
 class SessionManager:
     """Utility to manage `Session` objects, using session IDs as
@@ -388,6 +400,7 @@ class LPMEEndpointApi:
     async def __hndl_longpoll(self, ses:Session):
         f = asyncio.StreamReader()
         chunks = await ses.long_poll()
+        asyncio.create_task(chunk_writer(chunks, f))
 
         res = Response(respond_stream(f), 200, mimetype="application/x-lpme-chunks")
         res.headers.set("X-LPME-Chunk-Count", str(len(chunks)))

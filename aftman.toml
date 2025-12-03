@@ -1,0 +1,4 @@
+# the only reason this exists is so that rojo reports as installed
+
+[tools]
+rojo = "rojo-rbx/rojo@7.7.0-rc.1"

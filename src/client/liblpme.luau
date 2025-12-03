@@ -24,11 +24,13 @@ export type LPME = {
     __poll_thread: thread?,
 
     __longpoll: (self:LPME) -> nil,
+    __commands: {[string]:(data:string) -> nil},
 
     connect: (self:LPME, api_key:string) -> boolean,
     disconnect: (self:LPME) -> nil,
 
     run_event: (self:LPME, event:string, data:string) -> LPMEServerEventResponse,
+    command: (self:LPME, command_id:string, callback:(data:string) -> nil) -> nil
 }
 
 -- templates
@@ -62,6 +64,20 @@ local tmp_lpme: LPME = {
 
             if res.ok then
                 fails = 0
+
+                local pattern = string.rep("<s4", tonumber(res.headers:get("X-LPME-Chunk-Count")))
+                local chunks = table.pack(string.unpack(pattern, res.body))
+
+                for _, v in pairs(chunks) do
+                    local sep = string.find(v, "\x00", 0, true)
+                    local cmd, body = string.sub(v, 1, sep - 1), string.sub(sep + 1)
+
+                    if self.__commands[cmd] then
+                        self.__commands[cmd](body)
+                    else
+                        warn(`Received invalid command '{cmd}' from server with data length {#body} (total chunk size {#v})`)
+                    end
+                end
             else
                 fails += 1
                 if fails >= 8 then
@@ -117,6 +133,9 @@ local tmp_lpme: LPME = {
             }
         })
         return util.construct(tmp_lpmeservereventresponse, res)
+    end,
+    command = function(self:LPME, command_id:string, callback:(data:string) -> nil)
+        self.__commands[command_id] = callback
     end
 }
 
