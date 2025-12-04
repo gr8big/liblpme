@@ -28,7 +28,7 @@ from quart import Quart, Response, request, make_response
 
 async def respond_stream(f:asyncio.StreamReader):
     while True:
-        chunk = await f.read()
+        chunk = await f.read(65536)
         if chunk:
             yield chunk
         break
@@ -166,7 +166,11 @@ class Session:
         if isinstance(cpt, str):
             cpt = bytes(cpt, "utf8")
 
-        res = await asyncio.to_thread(bindings.sodium_memcmp, cpt, self.__token_str)
+        res = await asyncio.to_thread(
+            bindings.sodium_memcmp,
+            cpt,
+            self.__token_str
+        )
         if time.perf_counter() >= self.__expiry:
             return False
         
@@ -390,9 +394,9 @@ class LPMEEndpointApi:
 
                     if not isinstance(res, Response):
                         if isinstance(res, tuple):
-                            res = make_response(*res)
+                            res = await make_response(*res)
                         else:
-                            res = make_response(res)
+                            res = await make_response(res)
 
                     res.headers.set(
                         "X-LPME-Server-Id",
@@ -422,10 +426,11 @@ class LPMEEndpointApi:
                 api_key,
                 self.__lifetime
             )
+            token = await ses.get_user_token()
 
             response = Response("", 200, mimetype="text/plain")
             response.headers.set("X-LPME-Session-Id", str(ses.id))
-            response.headers.set("X-LPME-Session", ses)
+            response.headers.set("X-LPME-Session", token)
             response.headers.set("X-LPME-Server-Id", ses.unique_id)
             return response
 
@@ -434,6 +439,7 @@ class LPMEEndpointApi:
 
     async def __hndl_shutdown(self, ses:Session):
         await ses.teardown()
+        return ""
 
     async def __hndl_longpoll(self, ses:Session):
         f = asyncio.StreamReader()

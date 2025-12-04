@@ -55,4 +55,4 @@ async def evt_longtest(ses:liblpme.Session):
 # launcher
 
 if __name__ == "__main__":
-    app.run("127.0.0.1", 8080)
+    app.run("127.0.0.1", 8080, use_reloader=False)

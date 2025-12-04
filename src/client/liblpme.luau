@@ -27,6 +27,7 @@ export type LPMEServerEventResponse = {
     body: string,
     headers: util.Headers,
     status: number,
+    status_msg: string,
     ok: boolean,
 
     json: (self:LPMEServerEventResponse) -> {}|string|number|boolean
@@ -55,6 +56,7 @@ local tmp_lpmeservereventresponse: LPMEServerEventResponse = {
     __init__ = function(self:LPMEServerEventResponse, response:{[string]:any})
         self.body = response.Body
         self.status = response.StatusCode
+        self.status_msg = response.StatusMessage
         self.headers = util.Headers(response.Headers)
         self.ok = response.Success
     end,
@@ -70,6 +72,7 @@ local tmp_lpme: LPME = {
         end
 
         self.__base_url = base_url
+        self.__commands = {}
     end,
 
     __longpoll = function(self:LPME)
@@ -81,12 +84,15 @@ local tmp_lpme: LPME = {
             if res.ok then
                 fails = 0
 
-                local pattern = string.rep("<s4", tonumber(res.headers:get("X-LPME-Chunk-Count")))
+                local count = tonumber(res.headers:get("X-LPME-Chunk-Count"))
+                local pattern = string.rep("<s4", count)
                 local chunks = table.pack(string.unpack(pattern, res.body))
 
-                for _, v in pairs(chunks) do
+                for i = 1, count do
+                    local v = chunks[i]
+
                     local sep = string.find(v, "\x00", 0, true)
-                    local cmd, body = string.sub(v, 1, sep - 1), string.sub(sep + 1)
+                    local cmd, body = string.sub(v, 1, sep - 1), string.sub(v, sep + 1)
 
                     if self.__commands[cmd] then
                         self.__commands[cmd](body)
@@ -96,6 +102,7 @@ local tmp_lpme: LPME = {
                 end
             else
                 fails += 1
+                warn(`LPME request failed: {res.status} - {res.status_msg}`)
                 if fails >= 8 then
                     error("Number of failed requests reached maximum", 0)
                 end
@@ -118,7 +125,7 @@ local tmp_lpme: LPME = {
             self.__session_id = headers:get("X-LPME-Session-Id")
             self.__server_id = headers:get("X-LPME-Server-Id")
             
-            self.__poll_thread = task.spawn(self.__longpoll)
+            self.__poll_thread = task.spawn(self.__longpoll, self)
             return true
         else
             if res.StatusCode == 401 then
@@ -148,7 +155,7 @@ local tmp_lpme: LPME = {
             Body = data,
             Headers = {
                 ["X-LPME-Session-Id"] = self.__session_id,
-                ["X-LPME-Session"] = self.__session
+                ["X-LPME-Session"] = self.__session_token
             }
         })
         return util.construct(tmp_lpmeservereventresponse, res)
@@ -161,7 +168,7 @@ local tmp_lpme: LPME = {
 -- module
 
 return {
-    LPME = function(base_url:string)
+    LPME = function(base_url:string): LPME
         return util.construct(tmp_lpme, base_url)
     end
 }

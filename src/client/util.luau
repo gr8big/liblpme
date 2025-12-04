@@ -76,6 +76,7 @@ end
 local construct = function(template, ...): any
     local res = somewhat_deep_copy(template)
     res:__init__(...)
+    return res
 end
 
 local request = function(request): {[string]:any}
