@@ -1,1 +1,8 @@
 /.vscode/*
+*.rbxl
+*.rbxlx
+*.lock
+
+# EGGS
+
+/src/LibLPME.egg-info/*
