@@ -119,6 +119,7 @@ local tmp_lpme: LPME = {
             self.__server_id = headers:get("X-LPME-Server-Id")
             
             self.__poll_thread = task.spawn(self.__longpoll)
+            return true
         else
             if res.StatusCode == 401 then
                 error("Provided API key is invalid.", 0)
@@ -130,6 +131,8 @@ local tmp_lpme: LPME = {
                 error(`Unknown error. HTTP Status: {res.StatusCode}`, 0)
             end
         end
+
+        return false
     end,
     disconnect = function(self:LPME)
         self:run_event("/liblpme/shutdown", "")
