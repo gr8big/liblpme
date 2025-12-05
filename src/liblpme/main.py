@@ -1,12 +1,12 @@
 # This file is part of LibLPME.
 
-# LibLPME is free software; you can redistribute it and/or modify it under
-# the terms of the GNU General Public License as published by the Free
-# Software Foundation; either version 3, or (at your option) any later
-# version.
+# LibLPME is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 3, or (at your option) any
+# later version.
 
-# LibLPME is distributed in the hope that it will be useful, but WITHOUT ANY
-# WARRANTY; without even the implied warranty of MERCHANTABILITY or
+# LibLPME is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 # FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
 # for more details.
 
@@ -16,8 +16,12 @@
 
 import os
 import time
-import typing
 import asyncio
+from typing import (
+    Callable,
+    Awaitable,
+    Self
+)
 from nacl import bindings
 from hashlib import sha3_256
 from argon2 import exceptions
@@ -60,8 +64,8 @@ class Session:
     __expire_event: asyncio.Event
     __lifetime: float
     __expiry_task: asyncio.Task
-    __on_expire: list[typing.Callable[[typing.Self],typing.Awaitable[None]]]
-    __on_teardown: list[typing.Callable[[typing.Self],typing.Awaitable[None]]]
+    __on_expire: list[Callable[[Self],Awaitable[None]]]
+    __on_teardown: list[Callable[[Self],Awaitable[None]]]
     
     __outgoing: asyncio.Queue[bytes]
 
@@ -91,7 +95,7 @@ class Session:
 
     def on_expire(
         self,
-        callback:typing.Callable[[typing.Self],typing.Awaitable[None]]
+        callback:Callable[[Self],Awaitable[None]]
     ):
         """Add a listener that is called when the session expires.
         
@@ -107,7 +111,7 @@ class Session:
     
     def on_teardown(
         self,
-        callback:typing.Callable[[typing.Self],typing.Awaitable[None]]
+        callback:Callable[[Self],Awaitable[None]]
     ):
         """Add a listener that is called when the session expires.
         
@@ -373,7 +377,7 @@ class LPMEEndpointApi:
         if not endpoint.startswith("/"):
             raise ValueError("Endpoint must start with a trailing '/'")
         
-        def wrapper(callback:typing.Callable[...,typing.Awaitable]):
+        def wrapper(callback:Callable[...,Awaitable]):
             async def handler(*args, **kwargs):
                 ses_tk = request.headers.get(
                     "X-LPME-Session",
