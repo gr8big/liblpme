@@ -1,0 +1,7 @@
+[pytest]
+minversion = "9.0"
+addopts = ["-rf"]
+testpaths = [
+    "test/server"
+]
+console_output_style = "progress"

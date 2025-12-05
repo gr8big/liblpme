@@ -1,0 +1,15 @@
+{
+  "name": "liblpme",
+  "tree": {
+    "$className": "DataModel",
+
+    "ServerStorage": {
+      "LPME": {
+        "$path": "src/client"
+      }
+    },
+    "ServerScriptService": {
+      "$path": "example/client"
+    }
+  }
+}
