@@ -19,33 +19,6 @@
 import pytest
 import requests
 
-# auth fixture
-
-class AuthFixtureResult:
-    def __init__(self, id:str, tk:str, ud:str):
-        self.session_id = id
-        self.session = tk
-        self.server_id = ud
-
-
-@pytest.fixture(scope="session")
-def auth(lpme):
-    res = requests.post(
-        lpme,
-        headers={
-            "X-LPME-Token": "test"
-        }
-    )
-    
-    if not res.ok:
-        raise RuntimeError("Server reject")
-    
-    return AuthFixtureResult(
-        res.headers.get("X-LPME-Session-Id"),
-        res.headers.get("X-LPME-Session"),
-        res.headers.get("X-LPME-Server-Id")
-    )
-
 # test of proper authentication
 
 def test_auth(auth):
