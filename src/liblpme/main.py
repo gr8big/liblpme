@@ -354,10 +354,14 @@ class LPMEEndpointApi:
             
             manager = SessionManager(api_key, hasher)
 
+        self.session_manager = manager
+
         self.__app = app
         self.__base_endpoint = base_endpoint.rstrip("/")
-        self.__manager = manager
         self.__lifetime = lifetime
+
+        self.__session_open_events = []
+        self.__session_shutdown_events = []
 
         app.route(
             self.__base_endpoint,
@@ -388,7 +392,7 @@ class LPMEEndpointApi:
                     -1,
                     int
                 )
-                session = self.__manager.get_session(ses_id)
+                session = self.session_manager.get_session(ses_id)
 
                 if session is None:
                     return "Unauthorized", 401
@@ -419,6 +423,35 @@ class LPMEEndpointApi:
             return handler
         return wrapper
 
+    def on_session_start(self, callback:Callable[[Session],Awaitable[None]]):
+        """Add a handler for session start.
+
+        The `callback` is an async function that is called with one
+        argument, the session that is being opened.
+
+        Handlers for session start are run before the authentication
+        endpoint returns the session token, allowing server state
+        initialization before the client is able to send requests.
+        """
+
+        self.__session_open_events.append(callback)
+        return callback
+
+    def on_session_end(self, callback:Callable[[Session],Awaitable[None]]):
+        """Add a handler for session start.
+
+        The `callback` is an async function that is called with one
+        argument, the session that is shutting down.
+
+        Handlers for session end are run in a task that is started when
+        the client issues a shutdown event. This means the session will
+        be deactivated while handlers are running, and long-running
+        shutdown handlers will not block the deactivation.
+        """
+
+        self.__session_shutdown_events.append(callback)
+        return callback
+
 
     # base handlers
 
@@ -426,11 +459,14 @@ class LPMEEndpointApi:
         api_key = request.headers.get("X-LPME-Token", "")
 
         try:
-            ses = await self.__manager.authenticate(
+            ses = await self.session_manager.authenticate(
                 api_key,
                 self.__lifetime
             )
             token = await ses.get_user_token()
+
+            for i in self.__session_open_events:
+                await i(ses)
 
             response = Response("", 200, mimetype="text/plain")
             response.headers.set("X-LPME-Session-Id", str(ses.id))
@@ -443,6 +479,10 @@ class LPMEEndpointApi:
 
     async def __hndl_shutdown(self, ses:Session):
         await ses.teardown()
+
+        for i in self.__session_shutdown_events:
+            asyncio.create_task(i, ses)
+
         return ""
 
     async def __hndl_longpoll(self, ses:Session):
