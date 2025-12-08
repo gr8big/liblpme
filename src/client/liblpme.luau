@@ -48,7 +48,7 @@ export type LPME = {
 
     run_event: (self:LPME, event:string, data:string) -> LPMEServerEventResponse,
     command: (self:LPME, command_id:string, callback:(data:string) -> nil) -> nil
-}
+} & util.EventController
 
 -- templates
 
@@ -74,6 +74,7 @@ local tmp_lpme: LPME = {
         self.__base_url = base_url
         self.__commands = {}
     end,
+    __inherits__ = {util.templates.event_ctl},
 
     __longpoll = function(self:LPME)
         local fails = 0
@@ -126,6 +127,7 @@ local tmp_lpme: LPME = {
             self.__server_id = headers:get("X-LPME-Server-Id")
             
             self.__poll_thread = task.spawn(self.__longpoll, self)
+            self:trigger_event("connected")
             return true
         else
             if res.StatusCode == 401 then
@@ -142,6 +144,7 @@ local tmp_lpme: LPME = {
         return false
     end,
     disconnect = function(self:LPME)
+        self:trigger_event("disconnecting")
         self:run_event("/liblpme/shutdown", "")
         if self.__poll_thread then
             task.cancel(self.__poll_thread)

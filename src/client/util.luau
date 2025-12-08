@@ -22,6 +22,12 @@ local http = game:GetService("HttpService")
 
 -- types
 
+export type EventController = {
+    __event_listeners: {[string]:{(...any) -> nil}},
+    add_event_listener: (self:EventController, event:string, callback:(...any) -> nil) -> nil,
+    trigger_event: (self:EventController, event:string, ...any) -> nil
+}
+
 export type Headers = {
     __values: {[string]:string},
 
@@ -38,6 +44,25 @@ export type RequestAsyncResponse = {
 }
 
 -- templates
+
+local tmp_fire_event: EventController = {
+    __init__ = function(self)
+        self.__event_listeners = {}
+    end,
+
+    add_event_listener = function(self:EventController, event:string, callback:(...any) -> nil)
+        self.__event_listeners[event] = self.__event_listeners[event] or {}
+        self.__event_listeners[event][#self.__event_listeners[event]+1] = callback
+    end,
+
+    trigger_event = function(self:EventController, event:string, ...)
+        if self.__event_listeners[event] then
+            for _, i in pairs(self.__event_listeners[event]) do
+                task.spawn(i, ...)
+            end
+        end
+    end
+}
 
 local tmp_headers: Headers = {
     __init__ = function(self:Headers, from:{[string]:string})
@@ -69,13 +94,26 @@ somewhat_deep_copy = function(v:{}): {}
     return res
 end
 
--- Construct an object from a template.  
--- The template must contain an `__init__` method,
--- which is called with all other arguments to emulate
--- the `class` behavior in Python.
+--[[ Construct an object from a template.
+
+The template must contain an `__init__` method, which is called with all
+other arguments to emulate the `class` behavior in Python.
+
+Additionally, a `__inherits__` table may be included, which can contain
+references to other templates. The `__init__` method from these
+templates will be called on the object, but **values are not
+inherited.**
+]]
 local construct = function(template, ...): any
     local res = somewhat_deep_copy(template)
     res:__init__(...)
+
+    if res.__inherits__ then
+        for _, v in pairs(res.__inherits__) do
+            v.__init__(res, ...)
+        end
+    end
+
     return res
 end
 
@@ -115,5 +153,9 @@ return {
             Headers = {},
             Body = ""
         }
-    end
+    end,
+
+    templates = {
+        event_ctl = tmp_fire_event
+    }
 }
