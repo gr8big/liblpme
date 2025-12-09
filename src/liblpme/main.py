@@ -438,7 +438,7 @@ class LPMEEndpointApi:
         return callback
 
     def on_session_end(self, callback:Callable[[Session],Awaitable[None]]):
-        """Add a handler for session start.
+        """Add a handler for session end.
 
         The `callback` is an async function that is called with one
         argument, the session that is shutting down.
