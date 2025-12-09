@@ -212,6 +212,8 @@ manager.
 
 ### `Session`
 
+A session object representing a single client-initiated session.
+
 #### Constructor
 
 **Arguments:**
