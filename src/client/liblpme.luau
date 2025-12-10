@@ -39,6 +39,7 @@ export type LPME = {
     __server_id: string?,
     __base_url: string,
     __poll_thread: thread?,
+    __connected: boolean,
 
     __longpoll: (self:LPME) -> nil,
     __commands: {[string]:(data:string) -> nil},
@@ -73,6 +74,7 @@ local tmp_lpme: LPME = {
 
         self.__base_url = base_url
         self.__commands = {}
+        self.__connected = false
     end,
     __inherits__ = {util.templates.event_ctl},
 
@@ -112,6 +114,10 @@ local tmp_lpme: LPME = {
     end,
 
     connect = function(self:LPME, api_key:string)
+        if self.__connected then
+            return
+        end
+
         local res = util.safe_request({
             Url = self.__base_url,
             Method = "POST",
@@ -126,8 +132,11 @@ local tmp_lpme: LPME = {
             self.__session_id = headers:get("X-LPME-Session-Id")
             self.__server_id = headers:get("X-LPME-Server-Id")
             
+            self.__connected = true
             self.__poll_thread = task.spawn(self.__longpoll, self)
             self:trigger_event("connected")
+            game:BindToClose(function() self:disconnect() end)
+
             return true
         else
             if res.StatusCode == 401 then
@@ -144,6 +153,10 @@ local tmp_lpme: LPME = {
         return false
     end,
     disconnect = function(self:LPME)
+        if not self.__connected then
+            return
+        end
+
         self:trigger_event("disconnecting")
         self:run_event("/liblpme/shutdown", "")
         if self.__poll_thread then
